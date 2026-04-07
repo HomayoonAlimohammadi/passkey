@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Passkey Demo</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 480px;
+      margin: 60px auto;
+      padding: 0 16px;
+      color: #111;
+    }
+    h1 { font-size: 1.6rem; margin-bottom: 32px; }
+    .card {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    h2 { font-size: 1.1rem; margin-bottom: 16px; }
+    input {
+      display: block;
+      width: 100%;
+      padding: 9px 12px;
+      margin-bottom: 12px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      font-size: 1rem;
+    }
+    button {
+      padding: 9px 20px;
+      background: #0070f3;
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    button:hover { background: #005ac6; }
+    button:disabled { background: #aaa; cursor: default; }
+    #status {
+      margin-top: 20px;
+      padding: 12px 16px;
+      border-radius: 6px;
+      font-size: .95rem;
+      display: none;
+    }
+    .ok  { background: #ecfdf5; color: #065f46; border: 1px solid #6ee7b7; }
+    .err { background: #fef2f2; color: #991b1b; border: 1px solid #fca5a5; }
+    small { display: block; margin-top: 10px; color: #666; font-size: .82rem; }
+  </style>
+</head>
+<body>
+  <h1>Passkey Demo</h1>
+
+  <div class="card">
+    <h2>Register</h2>
+    <input id="reg-username" type="text" placeholder="Username" autocomplete="username webauthn" maxlength="64">
+    <button id="reg-btn" onclick="register()">Register passkey</button>
+    <small>Creates a new account (or adds a passkey to an existing one) using your device authenticator.</small>
+  </div>
+
+  <div class="card">
+    <h2>Login</h2>
+    <button id="login-btn" onclick="login()">Login with passkey</button>
+    <small>Usernameless — your device discovers the credential automatically.</small>
+  </div>
+
+  <div id="status"></div>
+
+  <script>
+    // ── Base64url helpers ────────────────────────────────────────────────────
+
+    function b64uDecode(str) {
+      const base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = base64.padEnd(base64.length + (4 - base64.length % 4) % 4, '=');
+      return Uint8Array.from(atob(padded), c => c.charCodeAt(0)).buffer;
+    }
+
+    function b64uEncode(buf) {
+      const bytes = new Uint8Array(buf);
+      let binary = '';
+      bytes.forEach(b => (binary += String.fromCharCode(b)));
+      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    }
+
+    // ── WebAuthn option preppers ─────────────────────────────────────────────
+    // The server sends base64url strings; the browser APIs need ArrayBuffers.
+
+    function prepareCreationOptions(serverOpts) {
+      const pk = serverOpts.publicKey;
+      pk.challenge = b64uDecode(pk.challenge);
+      pk.user.id   = b64uDecode(pk.user.id);
+      if (pk.excludeCredentials?.length) {
+        pk.excludeCredentials = pk.excludeCredentials.map(c => ({
+          ...c, id: b64uDecode(c.id),
+        }));
+      }
+      return pk;
+    }
+
+    function prepareRequestOptions(serverOpts) {
+      const pk = serverOpts.publicKey;
+      pk.challenge = b64uDecode(pk.challenge);
+      if (pk.allowCredentials?.length) {
+        pk.allowCredentials = pk.allowCredentials.map(c => ({
+          ...c, id: b64uDecode(c.id),
+        }));
+      }
+      return pk;
+    }
+
+    // ── Response serialisers ─────────────────────────────────────────────────
+    // Convert ArrayBuffer fields back to base64url for the server.
+
+    function serializeRegistration(cred) {
+      return {
+        id:    cred.id,
+        rawId: b64uEncode(cred.rawId),
+        type:  cred.type,
+        response: {
+          clientDataJSON:    b64uEncode(cred.response.clientDataJSON),
+          attestationObject: b64uEncode(cred.response.attestationObject),
+        },
+        ...(cred.authenticatorAttachment && {
+          authenticatorAttachment: cred.authenticatorAttachment,
+        }),
+      };
+    }
+
+    function serializeAuthentication(cred) {
+      return {
+        id:    cred.id,
+        rawId: b64uEncode(cred.rawId),
+        type:  cred.type,
+        response: {
+          clientDataJSON:    b64uEncode(cred.response.clientDataJSON),
+          authenticatorData: b64uEncode(cred.response.authenticatorData),
+          signature:         b64uEncode(cred.response.signature),
+          ...(cred.response.userHandle && {
+            userHandle: b64uEncode(cred.response.userHandle),
+          }),
+        },
+        ...(cred.authenticatorAttachment && {
+          authenticatorAttachment: cred.authenticatorAttachment,
+        }),
+      };
+    }
+
+    // ── UI helpers ───────────────────────────────────────────────────────────
+
+    function setStatus(msg, ok) {
+      const el = document.getElementById('status');
+      el.textContent = msg;
+      el.className = ok ? 'ok' : 'err';
+      el.style.display = 'block';
+    }
+
+    function setLoading(btnId, loading) {
+      document.getElementById(btnId).disabled = loading;
+    }
+
+    // ── Registration flow ────────────────────────────────────────────────────
+
+    async function register() {
+      const username = document.getElementById('reg-username').value.trim();
+      if (!username) { setStatus('Enter a username first.', false); return; }
+
+      setLoading('reg-btn', true);
+      try {
+        // 1. Fetch challenge + options from server
+        const beginRes = await fetch('/register/begin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username }),
+          credentials: 'same-origin',
+        });
+        const beginData = await beginRes.json();
+        if (!beginRes.ok) throw new Error(beginData.error || 'begin failed');
+
+        // 2. Prompt authenticator to create a keypair
+        const cred = await navigator.credentials.create({
+          publicKey: prepareCreationOptions(beginData),
+        });
+
+        // 3. Send signed credential to server for verification + storage
+        const finishRes = await fetch('/register/finish', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(serializeRegistration(cred)),
+          credentials: 'same-origin',
+        });
+        const finishData = await finishRes.json();
+        if (!finishRes.ok) throw new Error(finishData.error || 'finish failed');
+
+        setStatus(`Registered as "${finishData.username}". You can now log in.`, true);
+      } catch (err) {
+        setStatus(`Registration failed: ${err.message}`, false);
+      } finally {
+        setLoading('reg-btn', false);
+      }
+    }
+
+    // ── Login flow ───────────────────────────────────────────────────────────
+
+    async function login() {
+      setLoading('login-btn', true);
+      try {
+        // 1. Fetch challenge from server (discoverable – no username needed)
+        const beginRes = await fetch('/login/begin', {
+          method: 'POST',
+          credentials: 'same-origin',
+        });
+        const beginData = await beginRes.json();
+        if (!beginRes.ok) throw new Error(beginData.error || 'begin failed');
+
+        // 2. Prompt authenticator to sign the challenge (device picker appears)
+        const cred = await navigator.credentials.get({
+          publicKey: prepareRequestOptions(beginData),
+        });
+
+        // 3. Send signed assertion to server for verification
+        const finishRes = await fetch('/login/finish', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(serializeAuthentication(cred)),
+          credentials: 'same-origin',
+        });
+        const finishData = await finishRes.json();
+        if (!finishRes.ok) throw new Error(finishData.error || 'finish failed');
+
+        setStatus(`Logged in as "${finishData.username}". ✓`, true);
+      } catch (err) {
+        setStatus(`Login failed: ${err.message}`, false);
+      } finally {
+        setLoading('login-btn', false);
+      }
+    }
+  </script>
+</body>
+</html>
