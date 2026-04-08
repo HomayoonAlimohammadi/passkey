@@ -25,9 +25,9 @@ Browser                    Server                   Authenticator
   │◄─ CreationOptions ───────┤                            │
   │  {challenge, rpId, user} │                            │
   │                          │                            │
-  ├─ credentials.create() ──────────────────────────────►│
+  ├─ credentials.create() ───────────────────────────────►│
   │                          │         user verifies (biometric/PIN)
-  │◄─ PublicKeyCredential ───────────────────────────────┤
+  │◄─ PublicKeyCredential ────────────────────────────────┤
   │  {pubKey, attestation,   │         keypair generated; privKey stays on device
   │   signed clientDataJSON} │                            │
   │                          │                            │
@@ -47,10 +47,10 @@ Browser                    Server                   Authenticator
   │◄─ RequestOptions ────────┤                            │
   │  {challenge, rpId}       │                            │
   │                          │                            │
-  ├─ credentials.get() ────────────────────────────────►│
+  ├─ credentials.get() ──────────────────────────────────►│
   │                          │         user verifies (biometric/PIN)
-  │◄─ Assertion ─────────────────────────────────────────┤
-  │  {signed challenge,      │         signed with privKey
+  │◄─ Assertion ──────────────────────────────────────────┤
+  │  {signed challenge,      │                  signed with privKey
   │   userHandle}            │                            │
   │                          │                            │
   ├─ POST /login/finish ────►│                            │
@@ -58,16 +58,6 @@ Browser                    Server                   Authenticator
   │                          ├─ verify(signature, pubKey) │
   │◄─ {status: ok, username}─┤                            │
 ```
-
-### Key security properties
-
-| Property | How it's enforced |
-|---|---|
-| Replay attacks | Challenge is random, single-use, server-side only |
-| Phishing | `origin` in `clientDataJSON` is verified by the server |
-| Cross-protocol attacks | `type` field (`webauthn.create` / `webauthn.get`) is verified |
-| Cloned authenticator | Sign counter must strictly increase; `CloneWarning` logged |
-| Session tampering | `SessionData` never leaves the server; cookie is opaque token |
 
 ---
 
