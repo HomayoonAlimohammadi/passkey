@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/crypto/bcrypt"
+
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
@@ -344,6 +346,80 @@ func handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ---- Password-based auth handlers ----
+
+// POST /password/register
+// Body: {"username": "alice", "password": "s3cr3t"}
+func handlePasswordRegister(w http.ResponseWriter, r *http.Request) {
+	slog.Info("password/register: request received", "remote", r.RemoteAddr)
+
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" || req.Password == "" {
+		writeError(w, "username and password required", http.StatusBadRequest)
+		return
+	}
+	if len(req.Username) > 64 {
+		writeError(w, "username too long", http.StatusBadRequest)
+		return
+	}
+	if len(req.Password) < 8 {
+		writeError(w, "password must be at least 8 characters", http.StatusBadRequest)
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		slog.Error("password/register: bcrypt failed", "error", err)
+		writeError(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	user, created := users.GetOrCreate(req.Username)
+	if created {
+		slog.Info("password/register: new user created", "username", user.Name)
+	} else {
+		slog.Info("password/register: existing user found", "username", user.Name)
+	}
+	users.SetPassword(user.Name, hash)
+	slog.Info("password/register: complete", "username", user.Name)
+	writeJSON(w, map[string]string{"status": "ok", "username": user.Name})
+}
+
+// POST /password/login
+// Body: {"username": "alice", "password": "s3cr3t"}
+func handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
+	slog.Info("password/login: request received", "remote", r.RemoteAddr)
+
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" || req.Password == "" {
+		writeError(w, "username and password required", http.StatusBadRequest)
+		return
+	}
+
+	user, ok := users.Get(req.Username)
+	// Don't reveal whether the user exists — always return the same error.
+	if !ok || len(user.PasswordHash) == 0 {
+		slog.Warn("password/login: user not found or no password set", "username", req.Username)
+		writeError(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	if err := bcrypt.CompareHashAndPassword(user.PasswordHash, []byte(req.Password)); err != nil {
+		slog.Warn("password/login: wrong password", "username", req.Username)
+		writeError(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	slog.Info("password/login: complete", "username", user.Name)
+	writeJSON(w, map[string]string{"status": "ok", "username": user.Name})
+}
+
 // ---- Entry point ----
 
 func main() {
@@ -381,6 +457,9 @@ func main() {
 	mux.HandleFunc("POST /register/finish", handleRegisterFinish)
 	mux.HandleFunc("POST /login/begin", handleLoginBegin)
 	mux.HandleFunc("POST /login/finish", handleLoginFinish)
+	mux.HandleFunc("POST /password/register", handlePasswordRegister)
+	mux.HandleFunc("POST /password/login", handlePasswordLogin)
+	mux.HandleFunc("POST /graphql", handleGraphQL)
 	mux.Handle("/", http.FileServer(http.Dir("static")))
 	slog.Info("routes registered")
 

@@ -2,7 +2,11 @@ module github.com/HomayoonAlimohammadi/passkey
 
 go 1.25.0
 
-require github.com/go-webauthn/webauthn v0.16.3
+require (
+	github.com/go-webauthn/webauthn v0.16.3
+	github.com/graphql-go/graphql v0.8.1
+	golang.org/x/crypto v0.49.0
+)
 
 require (
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
@@ -14,6 +18,5 @@ require (
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/tinylib/msgp v1.6.3 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/crypto v0.49.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
 )

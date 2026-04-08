@@ -11,9 +11,10 @@ import (
 
 // User implements webauthn.User and serves as the credential record.
 type User struct {
-	ID          []byte
-	Name        string
-	Credentials []webauthn.Credential
+	ID           []byte
+	Name         string
+	Credentials  []webauthn.Credential
+	PasswordHash []byte // bcrypt hash; nil if no password set
 }
 
 func (u *User) WebAuthnID() []byte                         { return u.ID }
@@ -71,6 +72,19 @@ func (s *UserStore) GetByID(id []byte) (*User, bool) {
 		slog.Debug("user store: GetByID: no user found", "user_id", hex.EncodeToString(id))
 	}
 	return u, ok
+}
+
+// SetPassword stores a bcrypt hash for the named user.
+func (s *UserStore) SetPassword(name string, hash []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u, ok := s.byName[name]
+	if !ok {
+		slog.Error("user store: SetPassword: user not found", "username", name)
+		return
+	}
+	u.PasswordHash = hash
+	slog.Info("user store: password hash set", "username", name)
 }
 
 // AddCredential appends a new credential to the named user.

@@ -13,7 +13,19 @@
       padding: 0 16px;
       color: #111;
     }
-    h1 { font-size: 1.6rem; margin-bottom: 32px; }
+    h1 { font-size: 1.6rem; margin-bottom: 12px; }
+    #support-banner {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: .82rem;
+      font-weight: 600;
+      margin-bottom: 28px;
+    }
+    .banner-ok  { background: #ecfdf5; color: #065f46; border: 1px solid #6ee7b7; }
+    .banner-err { background: #fef3cd; color: #7c5c00; border: 1px solid #fcd34d; }
     .card {
       border: 1px solid #ddd;
       border-radius: 8px;
@@ -30,7 +42,7 @@
       border-radius: 5px;
       font-size: 1rem;
     }
-    button {
+    .btn-primary {
       padding: 9px 20px;
       background: #0070f3;
       color: #fff;
@@ -39,8 +51,35 @@
       font-size: 1rem;
       cursor: pointer;
     }
-    button:hover { background: #005ac6; }
-    button:disabled { background: #aaa; cursor: default; }
+    .btn-primary:hover { background: #005ac6; }
+    .btn-primary:disabled { background: #aaa; cursor: default; }
+    .btn-link {
+      background: none;
+      border: none;
+      color: #0070f3;
+      font-size: .85rem;
+      cursor: pointer;
+      margin-top: 10px;
+      display: inline-block;
+      text-decoration: underline;
+      padding: 0;
+    }
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 14px 0 2px;
+      color: #999;
+      font-size: .78rem;
+    }
+    .divider::before, .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: #e5e5e5;
+    }
+    .pw-section { display: none; }
+    .pw-section.visible { display: block; }
     #status {
       margin-top: 20px;
       padding: 12px 16px;
@@ -56,17 +95,53 @@
 <body>
   <h1>Passkey Demo</h1>
 
+  <!-- Populated by initUI() after feature detection -->
+  <div id="support-banner"></div>
+
+  <!-- ── Register ── -->
   <div class="card">
     <h2>Register</h2>
     <input id="reg-username" type="text" placeholder="Username" autocomplete="username webauthn" maxlength="64">
-    <button id="reg-btn" onclick="register()">Register passkey</button>
-    <small>Creates a new account (or adds a passkey to an existing one) using your device authenticator.</small>
+
+    <!-- Passkey path -->
+    <div id="reg-pk-section">
+      <button class="btn-primary" id="reg-btn" onclick="register()">Register with passkey</button>
+      <div class="divider">or</div>
+      <button class="btn-link" onclick="showPw('reg')">Use password instead</button>
+    </div>
+
+    <!-- Password fallback (hidden until toggled or passkeys unavailable) -->
+    <div id="reg-pw-section" class="pw-section">
+      <input id="reg-password" type="password" placeholder="Password (min 8 chars)" autocomplete="new-password">
+      <button class="btn-primary" id="reg-pw-btn" onclick="registerPassword()">Register with password</button>
+      <div class="divider">or</div>
+      <button class="btn-link" id="reg-back-btn" onclick="showPk('reg')">Use passkey instead</button>
+    </div>
+
+    <small id="reg-hint"></small>
   </div>
 
+  <!-- ── Login ── -->
   <div class="card">
     <h2>Login</h2>
-    <button id="login-btn" onclick="login()">Login with passkey</button>
-    <small>Usernameless — your device discovers the credential automatically.</small>
+
+    <!-- Passkey path -->
+    <div id="login-pk-section">
+      <button class="btn-primary" id="login-btn" onclick="login()">Login with passkey</button>
+      <div class="divider">or</div>
+      <button class="btn-link" onclick="showPw('login')">Use password instead</button>
+    </div>
+
+    <!-- Password fallback -->
+    <div id="login-pw-section" class="pw-section">
+      <input id="login-username" type="text" placeholder="Username" autocomplete="username">
+      <input id="login-password" type="password" placeholder="Password" autocomplete="current-password">
+      <button class="btn-primary" id="login-pw-btn" onclick="loginPassword()">Login with password</button>
+      <div class="divider">or</div>
+      <button class="btn-link" id="login-back-btn" onclick="showPk('login')">Use passkey instead</button>
+    </div>
+
+    <small id="login-hint"></small>
   </div>
 
   <div id="status"></div>
@@ -87,8 +162,69 @@
       return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
     }
 
+    // ── Passkey feature detection ────────────────────────────────────────────
+    //
+    // Two checks are required:
+    //   1. window.PublicKeyCredential — browser implements the WebAuthn API at all.
+    //   2. isUserVerifyingPlatformAuthenticatorAvailable() — the *device* has a
+    //      built-in authenticator (Touch ID, Face ID, Windows Hello, etc.).
+    //      Cross-platform authenticators (USB security keys) pass check 1 but
+    //      not necessarily check 2; for a passkey-first UX we care about the
+    //      platform version so the user doesn't need to carry a hardware key.
+
+    async function detectPasskeySupport() {
+      if (!window.PublicKeyCredential) return false;
+      try {
+        return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+      } catch {
+        return false;
+      }
+    }
+
+    // ── UI initialisation ────────────────────────────────────────────────────
+
+    async function initUI() {
+      const supported = await detectPasskeySupport();
+      const banner = document.getElementById('support-banner');
+
+      if (supported) {
+        banner.textContent = '✓ Passkeys supported on this device';
+        banner.className = 'banner-ok';
+        document.getElementById('reg-hint').textContent =
+          'Uses your device authenticator (Touch ID, Face ID, Windows Hello, …). No password needed.';
+        document.getElementById('login-hint').textContent =
+          'Usernameless — your device discovers the credential automatically.';
+      } else {
+        banner.textContent = '⚠ Passkeys not available — password fallback active';
+        banner.className = 'banner-err';
+
+        // Hide passkey sections and expose password forms directly.
+        document.getElementById('reg-pk-section').style.display  = 'none';
+        document.getElementById('login-pk-section').style.display = 'none';
+        document.getElementById('reg-pw-section').classList.add('visible');
+        document.getElementById('login-pw-section').classList.add('visible');
+        // Remove "Use passkey instead" back-links — passkeys simply aren't available.
+        document.getElementById('reg-back-btn').style.display   = 'none';
+        document.getElementById('login-back-btn').style.display = 'none';
+
+        document.getElementById('reg-hint').textContent =
+          'This browser / device does not support passkeys. Register with a password.';
+        document.getElementById('login-hint').textContent =
+          'This browser / device does not support passkeys. Log in with your password.';
+      }
+    }
+
+    // Toggle helpers — only reachable on passkey-capable devices.
+    function showPw(section) {
+      document.getElementById(`${section}-pk-section`).style.display = 'none';
+      document.getElementById(`${section}-pw-section`).classList.add('visible');
+    }
+    function showPk(section) {
+      document.getElementById(`${section}-pw-section`).classList.remove('visible');
+      document.getElementById(`${section}-pk-section`).style.display = '';
+    }
+
     // ── WebAuthn option preppers ─────────────────────────────────────────────
-    // The server sends base64url strings; the browser APIs need ArrayBuffers.
 
     function prepareCreationOptions(serverOpts) {
       const pk = serverOpts.publicKey;
@@ -114,7 +250,6 @@
     }
 
     // ── Response serialisers ─────────────────────────────────────────────────
-    // Convert ArrayBuffer fields back to base64url for the server.
 
     function serializeRegistration(cred) {
       return {
@@ -163,7 +298,7 @@
       document.getElementById(btnId).disabled = loading;
     }
 
-    // ── Registration flow ────────────────────────────────────────────────────
+    // ── Passkey registration ─────────────────────────────────────────────────
 
     async function register() {
       const username = document.getElementById('reg-username').value.trim();
@@ -171,7 +306,6 @@
 
       setLoading('reg-btn', true);
       try {
-        // 1. Fetch challenge + options from server
         const beginRes = await fetch('/register/begin', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -181,12 +315,10 @@
         const beginData = await beginRes.json();
         if (!beginRes.ok) throw new Error(beginData.error || 'begin failed');
 
-        // 2. Prompt authenticator to create a keypair
         const cred = await navigator.credentials.create({
           publicKey: prepareCreationOptions(beginData),
         });
 
-        // 3. Send signed credential to server for verification + storage
         const finishRes = await fetch('/register/finish', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -196,20 +328,44 @@
         const finishData = await finishRes.json();
         if (!finishRes.ok) throw new Error(finishData.error || 'finish failed');
 
-        setStatus(`Registered as "${finishData.username}". You can now log in.`, true);
+        setStatus(`Registered "${finishData.username}" with passkey. You can now log in.`, true);
       } catch (err) {
-        setStatus(`Registration failed: ${err.message}`, false);
+        setStatus(`Passkey registration failed: ${err.message}`, false);
       } finally {
         setLoading('reg-btn', false);
       }
     }
 
-    // ── Login flow ───────────────────────────────────────────────────────────
+    // ── Password registration ────────────────────────────────────────────────
+
+    async function registerPassword() {
+      const username = document.getElementById('reg-username').value.trim();
+      const password = document.getElementById('reg-password').value;
+      if (!username || !password) { setStatus('Enter username and password.', false); return; }
+
+      setLoading('reg-pw-btn', true);
+      try {
+        const res = await fetch('/password/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+          credentials: 'same-origin',
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'registration failed');
+        setStatus(`Registered "${data.username}" with password. You can now log in.`, true);
+      } catch (err) {
+        setStatus(`Password registration failed: ${err.message}`, false);
+      } finally {
+        setLoading('reg-pw-btn', false);
+      }
+    }
+
+    // ── Passkey login ────────────────────────────────────────────────────────
 
     async function login() {
       setLoading('login-btn', true);
       try {
-        // 1. Fetch challenge from server (discoverable – no username needed)
         const beginRes = await fetch('/login/begin', {
           method: 'POST',
           credentials: 'same-origin',
@@ -217,12 +373,10 @@
         const beginData = await beginRes.json();
         if (!beginRes.ok) throw new Error(beginData.error || 'begin failed');
 
-        // 2. Prompt authenticator to sign the challenge (device picker appears)
         const cred = await navigator.credentials.get({
           publicKey: prepareRequestOptions(beginData),
         });
 
-        // 3. Send signed assertion to server for verification
         const finishRes = await fetch('/login/finish', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -234,11 +388,39 @@
 
         setStatus(`Logged in as "${finishData.username}". ✓`, true);
       } catch (err) {
-        setStatus(`Login failed: ${err.message}`, false);
+        setStatus(`Passkey login failed: ${err.message}`, false);
       } finally {
         setLoading('login-btn', false);
       }
     }
+
+    // ── Password login ───────────────────────────────────────────────────────
+
+    async function loginPassword() {
+      const username = document.getElementById('login-username').value.trim();
+      const password = document.getElementById('login-password').value;
+      if (!username || !password) { setStatus('Enter username and password.', false); return; }
+
+      setLoading('login-pw-btn', true);
+      try {
+        const res = await fetch('/password/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+          credentials: 'same-origin',
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'login failed');
+        setStatus(`Logged in as "${data.username}". ✓`, true);
+      } catch (err) {
+        setStatus(`Password login failed: ${err.message}`, false);
+      } finally {
+        setLoading('login-pw-btn', false);
+      }
+    }
+
+    // ── Boot ─────────────────────────────────────────────────────────────────
+    initUI();
   </script>
 </body>
 </html>
