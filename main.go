@@ -197,6 +197,13 @@ func handleRegisterBegin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fmt.Println("REGISTER BEGIN")
+	fmt.Println("OPTS:")
+	{
+		b, _ := json.MarshalIndent(opts, "", "  ")
+		fmt.Println(string(b))
+	}
+
 	token := newToken()
 	slog.Info("register/begin: session created", "username", req.Username, "token_prefix", token[:8], "challenge_prefix", session.Challenge[:8])
 	regSess.set(token, &regEntry{data: session, username: req.Username})
@@ -241,6 +248,13 @@ func handleRegisterFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fmt.Println("REGISTER FINISH:")
+	fmt.Println("CREDS:")
+	{
+		b, _ := json.MarshalIndent(credential, "", "  ")
+		fmt.Println(string(b))
+	}
+
 	slog.Info("register/finish: credential verified",
 		"username", user.Name,
 		"credential_id", hex.EncodeToString(credential.ID),
@@ -268,6 +282,18 @@ func handleLoginBegin(w http.ResponseWriter, r *http.Request) {
 		slog.Error("login/begin: BeginDiscoverableLogin failed", "error", err)
 		writeError(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	fmt.Println("LOGIN BEGIN:")
+	fmt.Println("OPTS:")
+	{
+		b, _ := json.MarshalIndent(opts, "", "  ")
+		fmt.Println(string(b))
+	}
+	fmt.Println("SESSION:")
+	{
+		b, _ := json.MarshalIndent(session, "", "  ")
+		fmt.Println(string(b))
 	}
 
 	token := newToken()
@@ -299,6 +325,13 @@ func handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("login/finish: session resolved", "challenge_prefix", session.Challenge[:8])
 
+	fmt.Println("LOGIN FINISH:")
+	fmt.Println("SESSION:")
+	{
+		b, _ := json.MarshalIndent(session, "", "  ")
+		fmt.Println(string(b))
+	}
+
 	// DiscoverableUserHandler: called by the library with the credential's
 	// rawID and the userHandle (= user.WebAuthnID() stored by the authenticator).
 	handler := func(rawID, userHandle []byte) (webauthn.User, error) {
@@ -320,6 +353,13 @@ func handleLoginFinish(w http.ResponseWriter, r *http.Request) {
 		slog.Error("login/finish: FinishPasskeyLogin failed", "error", err)
 		writeError(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	fmt.Println("LOGIN FINISH:")
+	fmt.Println("CREDS:")
+	{
+		b, _ := json.MarshalIndent(credential, "", "  ")
+		fmt.Println(string(b))
 	}
 
 	slog.Info("login/finish: signature verified",

@@ -314,18 +314,25 @@
         });
         const beginData = await beginRes.json();
         if (!beginRes.ok) throw new Error(beginData.error || 'begin failed');
+        console.log('[register/begin] server options:', beginData);
 
-        const cred = await navigator.credentials.create({
-          publicKey: prepareCreationOptions(beginData),
-        });
+        const creationOpts = prepareCreationOptions(beginData);
+        console.log('[register/begin] prepared creation options (ArrayBuffers decoded):', creationOpts);
+
+        const cred = await navigator.credentials.create({ publicKey: creationOpts });
+        console.log('[register/begin] raw PublicKeyCredential from authenticator:', cred);
+
+        const serialized = serializeRegistration(cred);
+        console.log('[register/finish] serialized payload to server:', serialized);
 
         const finishRes = await fetch('/register/finish', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(serializeRegistration(cred)),
+          body: JSON.stringify(serialized),
           credentials: 'same-origin',
         });
         const finishData = await finishRes.json();
+        console.log('[register/finish] server response:', finishData);
         if (!finishRes.ok) throw new Error(finishData.error || 'finish failed');
 
         setStatus(`Registered "${finishData.username}" with passkey. You can now log in.`, true);
@@ -352,6 +359,7 @@
           credentials: 'same-origin',
         });
         const data = await res.json();
+        console.log('[password/register] server response:', data);
         if (!res.ok) throw new Error(data.error || 'registration failed');
         setStatus(`Registered "${data.username}" with password. You can now log in.`, true);
       } catch (err) {
@@ -372,18 +380,25 @@
         });
         const beginData = await beginRes.json();
         if (!beginRes.ok) throw new Error(beginData.error || 'begin failed');
+        console.log('[login/begin] server options:', beginData);
 
-        const cred = await navigator.credentials.get({
-          publicKey: prepareRequestOptions(beginData),
-        });
+        const requestOpts = prepareRequestOptions(beginData);
+        console.log('[login/begin] prepared request options (ArrayBuffers decoded):', requestOpts);
+
+        const cred = await navigator.credentials.get({ publicKey: requestOpts });
+        console.log('[login/begin] raw PublicKeyCredential from authenticator:', cred);
+
+        const serialized = serializeAuthentication(cred);
+        console.log('[login/finish] serialized payload to server:', serialized);
 
         const finishRes = await fetch('/login/finish', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(serializeAuthentication(cred)),
+          body: JSON.stringify(serialized),
           credentials: 'same-origin',
         });
         const finishData = await finishRes.json();
+        console.log('[login/finish] server response:', finishData);
         if (!finishRes.ok) throw new Error(finishData.error || 'finish failed');
 
         setStatus(`Logged in as "${finishData.username}". ✓`, true);
@@ -410,6 +425,7 @@
           credentials: 'same-origin',
         });
         const data = await res.json();
+        console.log('[password/login] server response:', data);
         if (!res.ok) throw new Error(data.error || 'login failed');
         setStatus(`Logged in as "${data.username}". ✓`, true);
       } catch (err) {
