@@ -162,6 +162,87 @@
       return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
     }
 
+    function b64Encode(buf) {
+      const bytes = new Uint8Array(buf);
+      let binary = '';
+      bytes.forEach(b => (binary += String.fromCharCode(b)));
+      return btoa(binary);
+    }
+
+    function toHex(buf) {
+      return Array.from(new Uint8Array(buf))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+    }
+
+    function toUUID(bytes16) {
+      const hex = Array.from(bytes16)
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('');
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
+
+    function parseAuthenticatorData(authDataBuffer) {
+      const bytes = new Uint8Array(authDataBuffer);
+      const view = new DataView(authDataBuffer);
+      if (bytes.length < 37) {
+        return { error: `authenticatorData too short: ${bytes.length} bytes` };
+      }
+
+      const flagsByte = bytes[32];
+      const flags = {
+        userPresent: !!(flagsByte & 0x01),
+        userVerified: !!(flagsByte & 0x04),
+        backupEligible: !!(flagsByte & 0x08),
+        backupState: !!(flagsByte & 0x10),
+        attestedCredentialDataIncluded: !!(flagsByte & 0x40),
+        extensionDataIncluded: !!(flagsByte & 0x80),
+      };
+
+      const parsed = {
+        totalLength: bytes.length,
+        rpIdHashHex: toHex(bytes.slice(0, 32)),
+        flagsByteHex: `0x${flagsByte.toString(16).padStart(2, '0')}`,
+        flags,
+        signCount: view.getUint32(33, false),
+      };
+
+      let offset = 37;
+      if (flags.attestedCredentialDataIncluded) {
+        if (bytes.length < offset + 18) {
+          parsed.error = 'attestedCredentialData flag set, but data is incomplete';
+          return parsed;
+        }
+
+        const aaguidBytes = bytes.slice(offset, offset + 16);
+        offset += 16;
+
+        const credIdLen = view.getUint16(offset, false);
+        offset += 2;
+
+        if (bytes.length < offset + credIdLen) {
+          parsed.error = 'credentialId length exceeds available bytes';
+          return parsed;
+        }
+
+        const credentialId = bytes.slice(offset, offset + credIdLen);
+        offset += credIdLen;
+
+        parsed.attestedCredentialData = {
+          aaguidHex: toHex(aaguidBytes),
+          aaguidUUID: toUUID(aaguidBytes),
+          credentialIdLength: credIdLen,
+          credentialIdBase64url: b64uEncode(credentialId.buffer),
+          credentialIdHex: toHex(credentialId),
+        };
+
+        parsed.cosePublicKeyBytesLength = bytes.length - offset;
+        parsed.cosePublicKeyBytesHex = toHex(bytes.slice(offset));
+      }
+
+      return parsed;
+    }
+
     // ── Passkey feature detection ────────────────────────────────────────────
     //
     // Two checks are required:
@@ -298,6 +379,19 @@
       document.getElementById(btnId).disabled = loading;
     }
 
+    function logLongString(label, value, chunkSize = 2000) {
+      if (typeof value !== 'string') {
+        console.log(label, value);
+        return;
+      }
+      console.group(`${label} (length=${value.length})`);
+      for (let i = 0; i < value.length; i += chunkSize) {
+        const end = Math.min(i + chunkSize, value.length);
+        console.log(`[${i}-${end}) ${value.slice(i, end)}`);
+      }
+      console.groupEnd();
+    }
+
     // ── Passkey registration ─────────────────────────────────────────────────
 
     async function register() {
@@ -322,8 +416,45 @@
         const cred = await navigator.credentials.create({ publicKey: creationOpts });
         console.log('[register/begin] raw PublicKeyCredential from authenticator:', cred);
 
+        const clientData = JSON.parse(new TextDecoder().decode(cred.response.clientDataJSON));
+        console.log('[register/begin] decoded clientDataJSON:', clientData);
+
+        if (typeof cred.response.getAuthenticatorData === 'function') {
+          const authData = cred.response.getAuthenticatorData();
+          const parsedAuthData = parseAuthenticatorData(authData);
+          console.log('[register/begin] parsed authenticatorData:', parsedAuthData);
+
+          const authBytes = new Uint8Array(authData);
+          const flagsByte = authBytes[32];
+          const hasAttestedCredentialData = !!(flagsByte & 0x40);
+          if (hasAttestedCredentialData && authBytes.length >= 55) {
+            let offset = 37 + 16;
+            const credIdLen = (authBytes[offset] << 8) | authBytes[offset + 1];
+            offset += 2 + credIdLen;
+            if (offset <= authBytes.length) {
+              const coseBytes = authBytes.slice(offset);
+              console.log('[register/begin] cosePublicKey (base64):', b64Encode(coseBytes.buffer));
+            }
+          }
+        }
+
+        if (typeof cred.response.getPublicKeyAlgorithm === 'function') {
+          console.log('[register/begin] publicKeyAlgorithm (COSE alg):', cred.response.getPublicKeyAlgorithm());
+        }
+
+        if (typeof cred.response.getPublicKey === 'function') {
+          const pubKey = cred.response.getPublicKey();
+          if (pubKey) {
+            console.log('[register/begin] publicKey (spki, base64url):', b64uEncode(pubKey));
+          }
+        }
+
         const serialized = serializeRegistration(cred);
         console.log('[register/finish] serialized payload to server:', serialized);
+        logLongString(
+          '[register/finish] attestationObject (base64url)',
+          serialized.response.attestationObject
+        );
 
         const finishRes = await fetch('/register/finish', {
           method: 'POST',

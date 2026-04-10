@@ -2,13 +2,16 @@ package main
 
 import (
 	"crypto/rand"
+	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +20,9 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 )
+
+//go:embed static
+var staticFiles embed.FS
 
 var (
 	wa        *webauthn.WebAuthn
@@ -467,11 +473,24 @@ func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	slog.Info("starting passkey demo server")
 
+	// Allow overriding via environment variables for cross-device testing.
+	// WebAuthn requires HTTPS (or localhost). For LAN/phone access use a tunnel:
+	//   ngrok http 8080
+	// Then: RPID=abc123.ngrok-free.app RP_ORIGINS=https://abc123.ngrok-free.app ./passkey
+	rpid := "localhost"
+	if v := os.Getenv("RPID"); v != "" {
+		rpid = v
+	}
+	origins := []string{"http://localhost:8080"}
+	if v := os.Getenv("RP_ORIGINS"); v != "" {
+		origins = strings.Split(v, ",")
+	}
+
 	var err error
 	wa, err = webauthn.New(&webauthn.Config{
 		RPDisplayName: "Passkey Demo",
-		RPID:          "localhost",
-		RPOrigins:     []string{"http://localhost:8080"},
+		RPID:          rpid,
+		RPOrigins:     origins,
 		// Require resident/discoverable credentials so the passkey login
 		// flow works without the user having to supply a username.
 		AuthenticatorSelection: protocol.AuthenticatorSelection{
@@ -483,8 +502,8 @@ func main() {
 		log.Fatal(err)
 	}
 	slog.Info("webauthn configured",
-		"rpid", "localhost",
-		"origins", []string{"http://localhost:8080"},
+		"rpid", rpid,
+		"origins", origins,
 		"resident_key", "required",
 		"user_verification", "preferred",
 	)
@@ -500,10 +519,17 @@ func main() {
 	mux.HandleFunc("POST /password/register", handlePasswordRegister)
 	mux.HandleFunc("POST /password/login", handlePasswordLogin)
 	mux.HandleFunc("POST /graphql", handleGraphQL)
-	mux.Handle("/", http.FileServer(http.Dir("static")))
+	subFS, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		log.Fatal(err)
+	}
+	mux.Handle("/", http.FileServer(http.FS(subFS)))
 	slog.Info("routes registered")
 
 	addr := ":8080"
-	slog.Info("listening", "addr", addr, "url", "http://localhost"+addr)
+	if v := os.Getenv("ADDR"); v != "" {
+		addr = v
+	}
+	slog.Info("listening", "addr", addr)
 	log.Fatal(http.ListenAndServe(addr, loggingMiddleware(mux)))
 }
